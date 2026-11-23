@@ -25,6 +25,7 @@
 
 #include <fcntl.h>
 #include <limits.h>
+#include <unistd.h>
 
 #include "evdev-tablet-pad.h"
 
@@ -127,7 +128,7 @@ pad_led_new(struct libinput *libinput, const char *prefix, int group, int mode)
 	led->mode_idx = mode;
 	list_init(&led->link);
 
-	/* /sys/devices/..../input1235/input1235::wacom-0.1/brightness,
+	/* /sys/devices/..../input1235/input1235::tablet-0.1/brightness,
 	 * where 0 and 1 are group and mode index. */
 	rc = snprintf(path, sizeof(path), "%s%d.%d/brightness", prefix, group, mode);
 	if (rc == -1)
@@ -237,11 +238,18 @@ pad_led_group_add_toggle_button(struct pad_led_group *group,
 	return 0;
 }
 
+/* LED class devices for pad mode LEDs are named
+ * <inputN>::tablet-<group>.<mode> (see the kernel's
+ * Documentation/input/tablet-guidelines.rst). The wacom kernel driver
+ * historically uses <inputN>::wacom-<group>.<mode>, so we fall back to
+ * that name if the vendor-neutral one doesn't exist for this group.
+ */
 static inline char *
-pad_led_get_sysfs_base_path(struct evdev_device *device)
+pad_led_get_sysfs_base_path(struct evdev_device *device, unsigned int group_index)
 {
 	struct udev_device *parent, *udev_device;
 	const char *test_path;
+	const char *names[] = { "tablet", "wacom" };
 
 	udev_device = device->udev_device;
 
@@ -259,6 +267,22 @@ pad_led_get_sysfs_base_path(struct evdev_device *device)
 	if (!parent)
 		return NULL;
 
+	ARRAY_FOR_EACH(names, name) {
+		_autofree_ char *led0 = NULL;
+		char *prefix = strdup_printf("%s/%s::%s-",
+					     udev_device_get_syspath(parent),
+					     udev_device_get_sysname(parent),
+					     *name);
+
+		/* The first mode of each group always exists */
+		led0 = strdup_printf("%s%u.0", prefix, group_index);
+		if (access(led0, F_OK) == 0)
+			return prefix;
+		free(prefix);
+	}
+
+	/* Neither exists, use the legacy name so the error messages
+	 * look like they always did */
 	return strdup_printf("%s/%s::wacom-",
 			     udev_device_get_syspath(parent),
 			     udev_device_get_sysname(parent));
@@ -281,9 +305,9 @@ pad_add_mode_group(struct pad_dispatch *pad,
 	int rc = -ENOMEM;
 	_autofree_ char *syspath;
 
-	/* syspath is /sys/class/leds/input1234/input12345::wacom-" and
-	   only needs the group + mode appended */
-	syspath = pad_led_get_sysfs_base_path(device);
+	/* syspath is /sys/class/leds/input1234/input12345::tablet-" (or
+	   ::wacom-) and only needs the group + mode appended */
+	syspath = pad_led_get_sysfs_base_path(device, group_index);
 	if (!syspath)
 		return -ENOMEM;
 
