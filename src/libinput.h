@@ -3417,6 +3417,16 @@ libinput_event_tablet_pad_get_key_state(struct libinput_event_tablet_pad *event)
  * each multiple of 120 indicating one logical wheel event.
  * See libinput_event_pointer_get_scroll_value_v120() for more details.
  *
+ * A positive value indicates clockwise rotation and a negative value
+ * counter-clockwise rotation, as seen by the user looking at the device
+ * in its default orientation. If left-handed mode is enabled on this
+ * device (see libinput_device_config_left_handed_set()) the direction
+ * is inverted, i.e. a positive value indicates counter-clockwise rotation.
+ *
+ * Prior to libinput 1.33, the direction of the first dial followed the
+ * direction of a vertical scroll wheel and was not affected by
+ * left-handed mode.
+ *
  * @note It is an application bug to call this function for events other than
  * @ref LIBINPUT_EVENT_TABLET_PAD_DIAL.  For other events, this function
  * returns 0.

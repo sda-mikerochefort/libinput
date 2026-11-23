@@ -542,73 +542,139 @@ START_TEST(pad_has_dial)
 }
 END_TEST
 
-START_TEST(pad_dial_low_res)
+/* Sends a low-resolution detent (plus the matching hi-res event if the
+ * device has one) for the given dial and checks the resulting delta. The
+ * kernel reports clockwise rotation as positive, libinput passes that
+ * through in right-handed mode and inverts it in left-handed mode. */
+static void
+pad_dial_check_low_res(struct litest_device *dev, unsigned int dial, bool left_handed)
 {
-	struct litest_device *dev = litest_current_device();
 	struct libinput *li = dev->libinput;
-	unsigned int code = 0;
+	unsigned int code, hires_code;
 
-	if (libevdev_has_event_code(dev->evdev, EV_REL, REL_WHEEL))
-		code = REL_WHEEL;
-	if (libevdev_has_event_code(dev->evdev, EV_REL, REL_DIAL))
-		code = REL_DIAL;
+	if (dial == 0) {
+		code = libevdev_has_event_code(dev->evdev, EV_REL, REL_DIAL)
+			       ? REL_DIAL
+			       : REL_WHEEL;
+		hires_code = REL_WHEEL_HI_RES;
+	} else {
+		code = REL_HWHEEL;
+		hires_code = REL_HWHEEL_HI_RES;
+	}
 
 	litest_drain_events(li);
 
 	for (int i = 0; i < 10; i++) {
-		int direction = -1 + 2 * i % 2;
-		litest_event(dev, EV_REL, code, direction);
-		if (code == REL_WHEEL)
-			litest_event(dev, EV_REL, REL_WHEEL_HI_RES, direction * 120);
+		int clockwise = (i % 2) ? 1 : -1;
+		litest_event(dev, EV_REL, code, clockwise);
+		if (code != REL_DIAL &&
+		    libevdev_has_event_code(dev->evdev, EV_REL, hires_code))
+			litest_event(dev, EV_REL, hires_code, clockwise * 120);
 		litest_event(dev, EV_SYN, SYN_REPORT, 0);
 		litest_dispatch(li);
 
 		struct libinput_event *ev = libinput_get_event(li);
-		struct libinput_event_tablet_pad *pev = litest_is_pad_dial_event(ev, 0);
+		struct libinput_event_tablet_pad *pev =
+			litest_is_pad_dial_event(ev, dial);
 
 		double v120 = libinput_event_tablet_pad_get_dial_delta_v120(pev);
-		switch (code) {
-		case REL_WHEEL: /* inverted */
-			litest_assert_double_eq(v120, -120.0 * direction);
-			break;
-		case REL_DIAL:
-			litest_assert_double_eq(v120, 120.0 * direction);
-			break;
-		default:
-			litest_abort_msg("Invalid dial code");
-		}
+		double expected = 120.0 * clockwise * (left_handed ? -1 : 1);
+		litest_assert_double_eq(v120, expected);
 		libinput_event_destroy(ev);
 	}
+}
+
+static void
+pad_dial_check_hi_res(struct litest_device *dev, unsigned int dial, bool left_handed)
+{
+	struct libinput *li = dev->libinput;
+	unsigned int code = dial == 0 ? REL_WHEEL : REL_HWHEEL;
+	unsigned int hires_code = dial == 0 ? REL_WHEEL_HI_RES : REL_HWHEEL_HI_RES;
+	const int increment = 30;
+	int accumulated = 0;
+
+	litest_drain_events(li);
+
+	for (int i = 0; i < 10; i++) {
+		litest_event(dev, EV_REL, hires_code, increment);
+		accumulated += increment;
+		if (accumulated % 120 == 0)
+			litest_event(dev, EV_REL, code, 1);
+		litest_event(dev, EV_SYN, SYN_REPORT, 0);
+		litest_dispatch(li);
+
+		struct libinput_event *ev = libinput_get_event(li);
+		struct libinput_event_tablet_pad *pev =
+			litest_is_pad_dial_event(ev, dial);
+
+		double v120 = libinput_event_tablet_pad_get_dial_delta_v120(pev);
+		litest_assert_double_eq(v120, left_handed ? -increment : increment);
+		libinput_event_destroy(ev);
+	}
+}
+
+static bool
+pad_dial_set_left_handed(struct litest_device *dev)
+{
+	struct libinput_device *device = dev->libinput_device;
+
+	if (!libinput_device_config_left_handed_is_available(device))
+		return false;
+
+	litest_assert_enum_eq(libinput_device_config_left_handed_set(device, 1),
+			      LIBINPUT_CONFIG_STATUS_SUCCESS);
+	return true;
+}
+
+START_TEST(pad_dial_low_res)
+{
+	struct litest_device *dev = litest_current_device();
+
+	pad_dial_check_low_res(dev, 0, false);
+	if (libevdev_has_event_code(dev->evdev, EV_REL, REL_HWHEEL))
+		pad_dial_check_low_res(dev, 1, false);
+}
+END_TEST
+
+START_TEST(pad_dial_low_res_left_handed)
+{
+	struct litest_device *dev = litest_current_device();
+
+	if (!pad_dial_set_left_handed(dev))
+		return LITEST_NOT_APPLICABLE;
+
+	pad_dial_check_low_res(dev, 0, true);
+	if (libevdev_has_event_code(dev->evdev, EV_REL, REL_HWHEEL))
+		pad_dial_check_low_res(dev, 1, true);
 }
 END_TEST
 
 START_TEST(pad_dial_hi_res)
 {
 	struct litest_device *dev = litest_current_device();
-	struct libinput *li = dev->libinput;
-	const int increment = 30;
-	int accumulated = 0;
 
 	if (!libevdev_has_event_code(dev->evdev, EV_REL, REL_WHEEL_HI_RES))
 		return LITEST_NOT_APPLICABLE;
 
-	litest_drain_events(li);
+	pad_dial_check_hi_res(dev, 0, false);
+	if (libevdev_has_event_code(dev->evdev, EV_REL, REL_HWHEEL_HI_RES))
+		pad_dial_check_hi_res(dev, 1, false);
+}
+END_TEST
 
-	for (int i = 0; i < 10; i++) {
-		litest_event(dev, EV_REL, REL_WHEEL_HI_RES, increment);
-		accumulated += increment;
-		if (accumulated % 120 == 0)
-			litest_event(dev, EV_REL, REL_WHEEL, 1);
-		litest_event(dev, EV_SYN, SYN_REPORT, 0);
-		litest_dispatch(li);
+START_TEST(pad_dial_hi_res_left_handed)
+{
+	struct litest_device *dev = litest_current_device();
 
-		struct libinput_event *ev = libinput_get_event(li);
-		struct libinput_event_tablet_pad *pev = litest_is_pad_dial_event(ev, 0);
+	if (!libevdev_has_event_code(dev->evdev, EV_REL, REL_WHEEL_HI_RES))
+		return LITEST_NOT_APPLICABLE;
 
-		double v120 = libinput_event_tablet_pad_get_dial_delta_v120(pev);
-		litest_assert_double_eq(v120, -increment); /* REL_WHEEL is inverted */
-		libinput_event_destroy(ev);
-	}
+	if (!pad_dial_set_left_handed(dev))
+		return LITEST_NOT_APPLICABLE;
+
+	pad_dial_check_hi_res(dev, 0, true);
+	if (libevdev_has_event_code(dev->evdev, EV_REL, REL_HWHEEL_HI_RES))
+		pad_dial_check_hi_res(dev, 1, true);
 }
 END_TEST
 
@@ -1218,7 +1284,9 @@ TEST_COLLECTION(pad)
 
 	litest_add(pad_has_dial, LITEST_DIAL, LITEST_ANY);
 	litest_add(pad_dial_low_res, LITEST_DIAL, LITEST_ANY);
+	litest_add(pad_dial_low_res_left_handed, LITEST_DIAL, LITEST_ANY);
 	litest_add(pad_dial_hi_res, LITEST_DIAL, LITEST_ANY);
+	litest_add(pad_dial_hi_res_left_handed, LITEST_DIAL, LITEST_ANY);
 
 	litest_add_for_device(pad_left_handed_default, LITEST_WACOM_INTUOS5_PAD);
 	litest_add_for_device(pad_no_left_handed, LITEST_WACOM_INTUOS3_PAD);

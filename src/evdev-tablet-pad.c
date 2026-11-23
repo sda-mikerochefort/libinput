@@ -95,6 +95,11 @@ pad_button_set_down(struct pad_dispatch *pad, evdev_usage_t button, bool is_down
 	}
 }
 
+/* The kernel reports clockwise rotation of a dial as a positive value
+ * on all of REL_DIAL, REL_WHEEL(_HI_RES) and REL_HWHEEL(_HI_RES), see
+ * Documentation/input/tablet-guidelines.rst. We pass that through as-is
+ * and only invert it in left-handed mode, see pad_dial_delta().
+ */
 static void
 pad_process_relative(struct pad_dispatch *pad,
 		     struct evdev_device *device,
@@ -109,7 +114,7 @@ pad_process_relative(struct pad_dispatch *pad,
 		break;
 	case EVDEV_REL_WHEEL:
 		if (!pad->dials.has_hires_dial) {
-			pad->dials.dial1 = -1 * e->value * 120;
+			pad->dials.dial1 = e->value * 120;
 			pad->changed_axes |= PAD_AXIS_DIAL1;
 			pad_set_status(pad, PAD_AXES_UPDATED);
 		}
@@ -122,7 +127,7 @@ pad_process_relative(struct pad_dispatch *pad,
 		}
 		break;
 	case EVDEV_REL_WHEEL_HI_RES:
-		pad->dials.dial1 = -1 * e->value;
+		pad->dials.dial1 = e->value;
 		pad->changed_axes |= PAD_AXIS_DIAL1;
 		pad_set_status(pad, PAD_AXES_UPDATED);
 		break;
@@ -275,6 +280,14 @@ pad_handle_ring(struct pad_dispatch *pad,
 	return degrees;
 }
 
+/* Dial deltas are positive for clockwise rotation in right-handed mode
+ * and positive for counter-clockwise rotation in left-handed mode */
+static inline double
+pad_dial_delta(struct evdev_device *device, double v120)
+{
+	return device->left_handed.enabled ? -v120 : v120;
+}
+
 static inline double
 pad_handle_strip(struct pad_dispatch *pad,
 		 struct evdev_device *device,
@@ -378,13 +391,21 @@ pad_check_notify_axes(struct pad_dispatch *pad,
 	if (pad->changed_axes & PAD_AXIS_DIAL1) {
 		group = pad_dial_get_mode_group(pad, 0);
 		if (group)
-			tablet_pad_notify_dial(base, time, 0, pad->dials.dial1, group);
+			tablet_pad_notify_dial(base,
+					       time,
+					       0,
+					       pad_dial_delta(device, pad->dials.dial1),
+					       group);
 	}
 
 	if (pad->changed_axes & PAD_AXIS_DIAL2) {
 		group = pad_dial_get_mode_group(pad, 1);
 		if (group)
-			tablet_pad_notify_dial(base, time, 1, pad->dials.dial2, group);
+			tablet_pad_notify_dial(base,
+					       time,
+					       1,
+					       pad_dial_delta(device, pad->dials.dial2),
+					       group);
 	}
 
 	if (pad->changed_axes & PAD_AXIS_RING1) {

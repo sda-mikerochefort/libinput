@@ -364,6 +364,13 @@ in its current orientation. On a tablet pad, the ring and strip are
 similarly adjusted. The origin of the ring and strips remain the top-most
 point.
 
+Dials report positive deltas for clockwise rotation in right-handed mode.
+In left-handed mode the direction is inverted and dials report positive
+deltas for counter-clockwise rotation. Rotating a device by 180 degrees
+does not change the physical direction of rotation; the inversion follows
+the convention that a left-handed user's natural "increase" direction is
+the mirror image of a right-handed user's.
+
 .. figure:: tablet-left-handed.svg
     :align: center
 
